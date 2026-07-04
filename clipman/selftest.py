@@ -21,7 +21,18 @@ if HAVE_XLIB:
     from Xlib import X, XK
 
 
+def _configure_output_encoding():
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            try:
+                stream.reconfigure(encoding="utf-8", errors="replace")
+            except (OSError, ValueError):
+                pass
+
+
 def run_selftest() -> int:
+    _configure_output_encoding()
+
     # 自测使用独立的临时目录,不碰真实历史数据
     tmp = tempfile.mkdtemp(prefix="clipboard-manager-selftest-")
     C.DATA_DIR = tmp
