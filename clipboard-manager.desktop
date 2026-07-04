@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=剪贴板历史
+Name[en]=Clipboard History
+Comment=记录复制的文本/图片/表情包,支持拖拽粘贴与排序
+Exec=/home/machache/item/myItem/copy_pasted/run.sh
+Icon=edit-paste
+Terminal=false
+Categories=Utility;
+StartupNotify=false
+X-GNOME-Autostart-enabled=true

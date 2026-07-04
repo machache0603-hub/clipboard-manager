@@ -1,0 +1,71 @@
+name: package
+# 三平台打包:Linux deb / Windows exe / macOS dmg。
+# 手动触发(Actions 页面 Run workflow)或推 v* 标签时运行,
+# 产物在运行记录的 Artifacts 里下载。
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: '版本号'
+        default: '1.1.0'
+  push:
+    tags: ['v*']
+
+env:
+  VERSION: ${{ github.event.inputs.version || github.ref_name || '1.1.0' }}
+
+jobs:
+  linux-deb:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: 打包 deb
+        run: |
+          VER="${VERSION#v}"
+          chmod +x packaging/build_deb.sh
+          ./packaging/build_deb.sh "$VER"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: clipboard-manager-linux-deb
+          path: dist/*.deb
+
+  windows-exe:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: 打包 exe
+        shell: bash
+        run: |
+          pip install PyQt6 pynput pyinstaller
+          pyinstaller --noconfirm --clean --onefile --windowed \
+            --name clipboard-manager clipboard_manager.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: clipboard-manager-windows-exe
+          path: dist/clipboard-manager.exe
+
+  macos-dmg:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: 打包 .app 与 dmg
+        run: |
+          VER="${VERSION#v}"
+          pip install PyQt6 pynput pyinstaller
+          pyinstaller --noconfirm --clean --windowed \
+            --name "Clipboard History" \
+            --osx-bundle-identifier com.clipboard-manager \
+            clipboard_manager.py
+          hdiutil create -volname "Clipboard History" \
+            -srcfolder "dist/Clipboard History.app" -ov -format UDZO \
+            "dist/ClipboardHistory_${VER}.dmg"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: clipboard-manager-macos-dmg
+          path: dist/*.dmg
