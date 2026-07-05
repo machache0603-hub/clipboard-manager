@@ -3,6 +3,8 @@
 import os
 import sys
 
+from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QColor, QPalette
 from PyQt6.QtNetwork import QLocalServer, QLocalSocket
 from PyQt6.QtWidgets import QApplication, QSystemTrayIcon
 
@@ -36,6 +38,40 @@ PYEOF
         pass
 
 
+def force_light_theme(app: QApplication):
+    """界面是按浅色设计写死的(白底卡片、浅色样式表),但 Windows/macOS
+    深色模式下 Qt 会跟随系统换成深色调色板,凡是没显式设置颜色的文字
+    都变成白色,出现"白字白底"看不见的问题;这里强制全程序用浅色配色。
+    只改调色板、不在 QSS 里全局设 color,以免盖掉单条目的自定义字体色。"""
+    try:
+        # Qt >= 6.8:声明浅色方案,Windows 标题栏/系统控件也跟着变浅色
+        app.styleHints().setColorScheme(Qt.ColorScheme.Light)
+    except AttributeError:
+        pass
+    pal = QPalette()
+    text = QColor("#202020")
+    for role, color in (
+            (QPalette.ColorRole.Window, QColor("#ffffff")),
+            (QPalette.ColorRole.WindowText, text),
+            (QPalette.ColorRole.Base, QColor("#ffffff")),
+            (QPalette.ColorRole.AlternateBase, QColor("#f5f7fa")),
+            (QPalette.ColorRole.Text, text),
+            (QPalette.ColorRole.Button, QColor("#ffffff")),
+            (QPalette.ColorRole.ButtonText, text),
+            (QPalette.ColorRole.ToolTipBase, QColor("#ffffff")),
+            (QPalette.ColorRole.ToolTipText, text),
+            (QPalette.ColorRole.PlaceholderText, QColor("#888888")),
+            (QPalette.ColorRole.Highlight, QColor("#dbeaff")),
+            (QPalette.ColorRole.HighlightedText, QColor("#000000")),
+            (QPalette.ColorRole.Link, QColor("#1a66cc"))):
+        pal.setColor(role, color)
+    disabled = QColor("#aaaaaa")
+    for role in (QPalette.ColorRole.WindowText, QPalette.ColorRole.Text,
+                 QPalette.ColorRole.ButtonText):
+        pal.setColor(QPalette.ColorGroup.Disabled, role, disabled)
+    app.setPalette(pal)
+
+
 def main():
     # PyQt6 默认对未捕获异常直接 abort;常驻程序只记录不退出
     import traceback
@@ -49,6 +85,7 @@ def main():
         sys.exit(run_selftest())
     app = QApplication(sys.argv)
     app.setApplicationName("clipboard-manager")
+    force_light_theme(app)
     app.setQuitOnLastWindowClosed(False)
 
     # 单实例:已有实例在运行时,通知它显示窗口,自己退出

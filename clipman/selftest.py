@@ -44,6 +44,8 @@ def run_selftest() -> int:
         json.dump({"hotkey": ""}, f)   # 无显示环境下不注册全局快捷键
 
     app = QApplication.instance() or QApplication(sys.argv)
+    from .app import force_light_theme
+    force_light_theme(app)
     win = ClipboardManager()
     failures = []
 
