@@ -8,6 +8,7 @@ import tempfile
 
 from PyQt6.QtCore import QMimeData, QRect, QUrl
 from PyQt6.QtGui import QColor, QImage
+from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication
 
 from . import constants as C
@@ -78,6 +79,12 @@ def run_selftest() -> int:
     clip_img = win.listw.item(0).data(ROLE_CLIP)
     check("添加图片条目", clip_img.kind == "image"
           and os.path.exists(clip_img.image_path))
+    image_mime = clip_img.to_mime()
+    png_data = bytes(image_mime.data("image/png"))
+    check("图片剪贴板提供标准 PNG",
+          image_mime.hasFormat("image/png")
+          and png_data.startswith(b"\x89PNG\r\n\x1a\n")
+          and not QImage.fromData(png_data, "PNG").isNull())
 
     # 文件条目
     m4 = QMimeData()
@@ -108,6 +115,23 @@ def run_selftest() -> int:
     check("历史条目回写剪贴板",
           QApplication.clipboard().mimeData().hasText()
           or QApplication.clipboard().mimeData().hasImage())
+
+    # 回归测试:单击信号必须走自动粘贴链路,不再等待双击。
+    paste_calls = []
+    old_is_linux = C.IS_LINUX
+    old_send_paste_key = win._send_paste_key
+    old_auto_paste = win.config["auto_paste"]
+    try:
+        C.IS_LINUX = False
+        win.config["auto_paste"] = True
+        win._send_paste_key = lambda: paste_calls.append(True)
+        win.listw.itemClicked.emit(win.listw.item(0))
+        QTest.qWait(350)
+    finally:
+        C.IS_LINUX = old_is_linux
+        win._send_paste_key = old_send_paste_key
+        win.config["auto_paste"] = old_auto_paste
+    check("单击条目触发自动粘贴", len(paste_calls) == 1)
 
     # 持久化往返
     win.save_history()
@@ -245,7 +269,7 @@ def run_selftest() -> int:
           and win.listw.count() > 0)            # 不影响历史列表
     win.switch_page(0)
 
-    # 呼出定位:不在输入 → 右上角;正在输入 → 输入位置旁边
+    # 呼出定位:不在输入 → 右上角;正在输入 → 避开输入位置
     import clipman.main_window as mw
     geo = (QApplication.screenAt(win.pos())
            or QApplication.primaryScreen()).availableGeometry()
@@ -259,9 +283,10 @@ def run_selftest() -> int:
         mw.typing_anchor = lambda: (200, 300)
         win.hide()
         win.toggle_visible()
-        exp_x = max(geo.left(), min(200 + 24, geo.right() - win.width()))
-        exp_y = max(geo.top(), min(300 - 60, geo.bottom() - win.height()))
-        beside_ok = win.x() == exp_x and win.y() == exp_y
+        protected = QRect(200 - 12, 300 - 12, 24, 24)
+        placed = win.geometry()
+        beside_ok = (geo.contains(placed)
+                     and not placed.intersects(protected))
     finally:
         mw.typing_anchor = orig_anchor
     check("呼出窗口定位", corner_ok and beside_ok)

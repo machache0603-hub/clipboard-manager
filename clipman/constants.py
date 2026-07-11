@@ -45,7 +45,7 @@ DEFAULT_CONFIG = {
     "hotkey": "Ctrl+Alt+V",   # 全局快捷键:呼出/隐藏窗口
     "max_items": 200,         # 历史条数上限
     "font_size": 11,          # 列表字体大小
-    "auto_paste": True,       # 双击时自动粘贴到上一个窗口
+    "auto_paste": True,       # 单击时自动粘贴到上一个窗口
     "language": "auto",       # 界面语言:auto(跟随系统)/ zh / en
 }
 PREVIEW_CHARS = 300      # 文本条目预览的最大字符数

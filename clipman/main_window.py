@@ -8,7 +8,7 @@ import shutil
 import subprocess
 import uuid
 
-from PyQt6.QtCore import (QBuffer, QIODevice, QMimeData, Qt, QTimer,
+from PyQt6.QtCore import (QBuffer, QIODevice, QMimeData, QPoint, Qt, QTimer,
                           pyqtSignal)
 from PyQt6.QtGui import (QBrush, QColor, QCursor, QIcon, QImage,
                          QKeySequence, QPainter, QPixmap, QShortcut)
@@ -115,8 +115,9 @@ class ClipboardManager(QWidget):
         self.listw = CardList(self)     # 剪贴板历史
         self.favw = CardList(self)      # 常用内容
         for lw in (self.listw, self.favw):
-            lw.itemClicked.connect(self.copy_item)
-            lw.itemDoubleClicked.connect(self.copy_and_paste_item)
+            # 单击即完成回写剪贴板和自动粘贴。卡片仍会抑制
+            # 双击的第二次 release，因此快速双击也只粘贴一次。
+            lw.itemClicked.connect(self.copy_and_paste_item)
             lw.itemEntered.connect(self._on_item_hover)
             lw.customContextMenuRequested.connect(self.show_menu)
 
@@ -272,7 +273,7 @@ class ClipboardManager(QWidget):
         self.add_btn.setText(tr("➕ 添加"))
         self.add_btn.setToolTip(tr("手动添加一条常用内容"))
         self.hint_label.setText(
-            tr("单击=复制 · 双击=复制并粘贴 · 悬浮=预览/编辑完整内容 · "
+            tr("单击=复制并粘贴 · 悬浮=预览/编辑完整内容 · "
                "拖到目标窗口=粘贴 · 列表内拖动=排序 · "
                "右键=改字体颜色/删除"))
 
@@ -289,9 +290,13 @@ class ClipboardManager(QWidget):
                 lw.item(row).retranslate()
 
     def _place_window(self):
-        """呼出时定位窗口:正在输入 → 停靠在输入位置旁边;
+        """呼出时定位窗口:正在输入 → 在输入光标四周避让;
         否则停靠到当前屏幕右上角。"""
-        screen = (QApplication.screenAt(QCursor.pos())
+        anchor = typing_anchor()
+        anchor_pos = QPoint(*anchor) if anchor is not None else QCursor.pos()
+        # 多屏时以真实输入光标所在的屏幕为准，不依赖
+        # 鼠标当前停留的屏幕。
+        screen = (QApplication.screenAt(anchor_pos)
                   or QApplication.primaryScreen())
         geo = screen.availableGeometry()
         # 未显示过时 width() 还是初始值,show 后布局会撑到最小尺寸,
@@ -299,15 +304,36 @@ class ClipboardManager(QWidget):
         hint = self.minimumSizeHint()
         w = max(self.width(), hint.width())
         h = max(self.height(), hint.height())
-        anchor = typing_anchor()
         if anchor is None:                   # 不在输入:右上角
             x, y = geo.right() - w - 12, geo.top() + 12
-        else:                                # 输入位置旁边
+        else:
             ax, ay = anchor
-            x = ax + 24                      # 优先放右侧
-            if x + w > geo.right():
-                x = ax - w - 24              # 放不下放左侧
-            y = ay - 60                      # 略高于锚点,贴着输入行
+            gap = 24
+            spaces = {
+                "above": ay - geo.top() - gap,
+                "below": geo.bottom() - ay - gap,
+                "left": ax - geo.left() - gap,
+                "right": geo.right() - ax - gap,
+            }
+
+            # 优先放到输入行的上/下方，避免挡住同一行已输入的
+            # 文本。垂直空间不足时才选左/右侧。
+            vertical = [side for side in ("below", "above")
+                        if spaces[side] >= h]
+            horizontal = [side for side in ("right", "left")
+                          if spaces[side] >= w]
+            choices = vertical or horizontal
+            side = (max(choices, key=lambda name: spaces[name])
+                    if choices else max(spaces, key=spaces.get))
+
+            if side == "above":
+                x, y = ax - w // 2, ay - h - gap
+            elif side == "below":
+                x, y = ax - w // 2, ay + gap
+            elif side == "left":
+                x, y = ax - w - gap, ay - h // 2
+            else:
+                x, y = ax + gap, ay - h // 2
         x = max(geo.left(), min(x, geo.right() - w))
         y = max(geo.top(), min(y, geo.bottom() - h))
         self.move(x, y)
@@ -318,8 +344,9 @@ class ClipboardManager(QWidget):
             self.preview.hide_popup()
             self.hide()
         else:
-            if not self.isVisible():
-                self._place_window()         # 仅从隐藏呼出时重新定位
+            # 隐藏后呼出，或窗口在后台时再次按快捷键，都按
+            # 当前输入位置重新避让。
+            self._place_window()
             self.show()
             self.raise_()
             self.activateWindow()
@@ -766,7 +793,7 @@ class ClipboardManager(QWidget):
         if shutil.which("xdotool") is None:
             QMessageBox.information(
                 self, tr("提示"),
-                tr("已复制到剪贴板。安装 xdotool 后,双击可自动粘贴:\n"
+                tr("已复制到剪贴板。安装 xdotool 后,单击可自动粘贴:\n"
                    "sudo apt install xdotool"))
             return
         # 不隐藏本窗口:把焦点切回上一个活动窗口后再模拟 Ctrl+V
@@ -805,7 +832,7 @@ class ClipboardManager(QWidget):
             kb.release("v")
 
     def _track_active_window(self):
-        """记录最近一个非本程序的活动窗口,双击粘贴时把焦点还给它
+        """记录最近一个非本程序的活动窗口,单击粘贴时把焦点还给它
         (仅 Linux/X11;Windows/macOS 靠隐藏窗口归还焦点)。"""
         if (not C.IS_LINUX or not self.isVisible()
                 or shutil.which("xdotool") is None):

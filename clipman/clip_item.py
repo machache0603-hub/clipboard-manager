@@ -2,7 +2,7 @@
 
 import os
 
-from PyQt6.QtCore import QByteArray, QMimeData, QUrl
+from PyQt6.QtCore import QBuffer, QByteArray, QIODevice, QMimeData, QUrl
 from PyQt6.QtGui import QImage
 
 from . import constants as C
@@ -63,6 +63,14 @@ class ClipItem:
             img = QImage(self.image_path)
             if not img.isNull():
                 mime.setImageData(img)
+                # setImageData 只保证 Qt 程序能读取
+                # application/x-qt-image。Codex CLI、xclip 等非 Qt
+                # 程序需要剪贴板直接提供标准 PNG 字节。
+                buf = QBuffer()
+                if buf.open(QIODevice.OpenModeFlag.WriteOnly):
+                    if img.save(buf, "PNG"):
+                        mime.setData("image/png", buf.data())
+                    buf.close()
             if self.html:
                 mime.setHtml(self.html)
             if os.path.exists(self.image_path):

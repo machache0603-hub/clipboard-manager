@@ -61,7 +61,7 @@ class SettingsDialog(QDialog):
         idx = self.lang_combo.findData(config.get("language", "auto"))
         self.lang_combo.setCurrentIndex(max(0, idx))
 
-        self.paste_chk = QCheckBox(tr("双击条目时自动粘贴到上一个窗口"))
+        self.paste_chk = QCheckBox(tr("单击条目时自动粘贴到上一个窗口"))
         self.paste_chk.setChecked(bool(config["auto_paste"]))
 
         self.autostart_chk = QCheckBox(tr("登录系统后自动启动"))
