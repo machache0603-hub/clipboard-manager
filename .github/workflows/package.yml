@@ -94,5 +94,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release create "$GITHUB_REF_NAME" release-assets/* \
+            --repo "$GITHUB_REPOSITORY" \
             --title "Clipboard Manager $GITHUB_REF_NAME" \
             --generate-notes
