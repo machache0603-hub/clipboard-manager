@@ -1,7 +1,7 @@
 name: package
 # 三平台打包:Linux deb / Windows exe / macOS dmg。
-# 手动触发(Actions 页面 Run workflow)或推 v* 标签时运行,
-# 产物在运行记录的 Artifacts 里下载。
+# 手动触发时产物保存到 Artifacts;推 v* 标签时还会创建
+# GitHub Release，上传三个安装包和 SHA256SUMS.txt。
 on:
   workflow_dispatch:
     inputs:
@@ -13,6 +13,9 @@ on:
 
 env:
   VERSION: ${{ github.event.inputs.version || github.ref_name || '1.1.0' }}
+
+permissions:
+  contents: write
 
 jobs:
   linux-deb:
@@ -39,13 +42,16 @@ jobs:
       - name: 打包 exe
         shell: bash
         run: |
+          VER="${VERSION#v}"
           pip install PyQt6 pynput pyinstaller
           pyinstaller --noconfirm --clean --onefile --windowed \
             --name clipboard-manager clipboard_manager.py
+          mv dist/clipboard-manager.exe \
+            "dist/clipboard-manager_${VER}_windows.exe"
       - uses: actions/upload-artifact@v4
         with:
           name: clipboard-manager-windows-exe
-          path: dist/clipboard-manager.exe
+          path: dist/*_windows.exe
 
   macos-dmg:
     runs-on: macos-latest
@@ -69,3 +75,24 @@ jobs:
         with:
           name: clipboard-manager-macos-dmg
           path: dist/*.dmg
+
+  publish-release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [linux-deb, windows-exe, macos-dmg]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+      - name: 生成 SHA256 校验文件
+        run: |
+          cd release-assets
+          sha256sum ./* > SHA256SUMS.txt
+      - name: 发布 GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" release-assets/* \
+            --title "Clipboard Manager $GITHUB_REF_NAME" \
+            --generate-notes

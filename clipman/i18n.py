@@ -26,10 +26,10 @@ EN = {
         "Keep the window above others for easy dragging",
     "🗑 清空": "🗑 Clear",
     "⚙ 设置": "⚙ Settings",
-    "单击=复制 · 双击=复制并粘贴 · 悬浮=预览/编辑完整内容 · "
+    "单击=复制并粘贴 · 悬浮=预览/编辑完整内容 · "
     "拖到目标窗口=粘贴 · 列表内拖动=排序 · 右键=改字体颜色/删除":
-        "Click = copy · Double-click = copy & paste · "
-        "Hover = preview/edit · Drag out = paste · "
+        "Click = copy & paste · Hover = preview/edit · "
+        "Drag out = paste · "
         "Drag in list = reorder · Right-click = color/delete",
     "显示/隐藏窗口": "Show/Hide Window",
     "退出": "Quit",
@@ -56,10 +56,10 @@ EN = {
         "to restore the window",
     "已复制": "Copied",
     "提示": "Note",
-    "已复制到剪贴板。安装 xdotool 后,双击可自动粘贴:\n"
+    "已复制到剪贴板。安装 xdotool 后,单击可自动粘贴:\n"
     "sudo apt install xdotool":
         "Copied to clipboard. Install xdotool to enable auto-paste "
-        "on double-click:\nsudo apt install xdotool",
+        "on click:\nsudo apt install xdotool",
     "请到目标窗口按 {} 粘贴":
         "Switch to the target window and press {} to paste",
     "未安装 pynput,无法自动粘贴,请按 {} 粘贴":
@@ -105,8 +105,8 @@ EN = {
     "列表字体大小:": "List font size:",
     "语言:": "Language:",
     "跟随系统": "Follow system",
-    "双击条目时自动粘贴到上一个窗口":
-        "Auto-paste to the previous window on double-click",
+    "单击条目时自动粘贴到上一个窗口":
+        "Auto-paste to the previous window on click",
     "登录系统后自动启动": "Start automatically after login",
     "提示:快捷键在输入框内直接按组合键即可,"
     "Cmd 组合键请从「常用」菜单选择;留空表示不使用全局快捷键。"

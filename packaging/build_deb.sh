@@ -58,7 +58,7 @@ Installed-Size: $INSTALLED_SIZE
 Maintainer: machache <t01090045360@gmail.com>
 Description: Clipboard history manager for Linux (PyQt6)
  剪贴板历史管理器:常驻后台记录复制过的文本、图片、表情包、文件,
- 单击放回剪贴板、双击自动粘贴(需 xdotool)、支持拖拽粘贴与排序,
+ 单击自动粘贴(需 xdotool)、支持拖拽粘贴与排序,
  历史持久化到 ~/.local/share/clipboard-manager/。
  针对 X11 会话(Ubuntu 的 Xorg);Wayland 下后台监听剪贴板受限。
 EOF
