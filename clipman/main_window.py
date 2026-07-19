@@ -14,7 +14,8 @@ from PyQt6.QtGui import (QBrush, QColor, QCursor, QIcon, QImage,
                          QKeySequence, QPainter, QPixmap, QShortcut)
 from PyQt6.QtWidgets import (QApplication, QColorDialog, QDialog,
                              QDialogButtonBox, QHBoxLayout, QLabel,
-                             QLineEdit, QMenu, QMessageBox, QPlainTextEdit,
+                             QInputDialog, QLineEdit, QMenu, QMessageBox,
+                             QPlainTextEdit,
                              QPushButton, QStackedWidget, QSystemTrayIcon,
                              QVBoxLayout, QWidget)
 
@@ -25,7 +26,7 @@ from .constants import DEFAULT_COLOR, DEFAULT_CONFIG, ROLE_CLIP, hei_font
 from .i18n import tr
 from .caret import typing_anchor
 from .cards import CardList
-from .clip_item import ClipItem
+from .clip_item import ClipItem, is_audio_file, is_image_file
 from .gnome import (GNOME_ENTRY_NAME, GNOME_ENTRY_PATH, GNOME_MEDIA,
                     find_gnome_conflicts, gget, gset, release_gnome_binding)
 from .hotkey import (HotkeyGrabber, PynputHotkey, accel_parts,
@@ -36,6 +37,7 @@ from .settings_dialog import SettingsDialog
 
 class ClipboardManager(QWidget):
     hotkey_pressed = pyqtSignal()   # 从 pynput 线程安全地切回 Qt 主线程
+    CATEGORIES = ("text", "image", "audio")
 
     def __init__(self):
         super().__init__()
@@ -58,11 +60,6 @@ class ClipboardManager(QWidget):
         self._build_ui()
         self._build_tray()
         self.preview = PreviewPopup(self)
-        self._hover_item = None
-        self._hover_timer = QTimer(self)
-        self._hover_timer.setSingleShot(True)
-        self._hover_timer.setInterval(450)
-        self._hover_timer.timeout.connect(self._show_preview)
         self.load_history()
         self.hotkey_pressed.connect(self.toggle_visible)
         self.register_hotkey()
@@ -95,7 +92,7 @@ class ClipboardManager(QWidget):
         top.addWidget(self.settings_btn)
         top.addWidget(self.pin_btn)     # 窗口置顶是模式开关,放最右端
 
-        # 两个页签:剪贴板历史 / 常用内容
+        # 第一层页签:剪贴板历史 / 常用内容
         self.hist_tab = QPushButton()
         self.fav_tab = QPushButton()
         for btn in (self.hist_tab, self.fav_tab):
@@ -112,18 +109,49 @@ class ClipboardManager(QWidget):
         tabs.addStretch(1)
         tabs.addWidget(self.add_btn)
 
-        self.listw = CardList(self)     # 剪贴板历史
-        self.favw = CardList(self)      # 常用内容
-        for lw in (self.listw, self.favw):
+        # 第二层页签:文本 / 图片 / 音频。每一类使用真正独立的列表页。
+        self.text_tab = QPushButton()
+        self.image_tab = QPushButton()
+        self.audio_tab = QPushButton()
+        self.category_buttons = {
+            "text": self.text_tab,
+            "image": self.image_tab,
+            "audio": self.audio_tab,
+        }
+        category_tabs = QHBoxLayout()
+        category_tabs.setSpacing(6)
+        for category, btn in self.category_buttons.items():
+            btn.setCheckable(True)
+            btn.clicked.connect(
+                lambda _checked=False, value=category:
+                self.switch_category(value))
+            category_tabs.addWidget(btn, 1)
+        self.text_tab.setChecked(True)
+
+        self.history_lists = {
+            category: CardList(self, grid_mode=(category == "image"))
+            for category in self.CATEGORIES
+        }
+        self.favorite_lists = {
+            category: CardList(self, grid_mode=(category == "image"))
+            for category in self.CATEGORIES
+        }
+        # 旧属性继续指向文本列表，避免外部扩展升级后立即报错。
+        self.listw = self.history_lists["text"]
+        self.favw = self.favorite_lists["text"]
+        for lw in self.all_lists():
             # 单击即完成回写剪贴板和自动粘贴。卡片仍会抑制
             # 双击的第二次 release，因此快速双击也只粘贴一次。
             lw.itemClicked.connect(self.copy_and_paste_item)
-            lw.itemEntered.connect(self._on_item_hover)
             lw.customContextMenuRequested.connect(self.show_menu)
 
         self.stack = QStackedWidget()
-        self.stack.addWidget(self.listw)
-        self.stack.addWidget(self.favw)
+        for lists in (self.history_lists, self.favorite_lists):
+            for category in self.CATEGORIES:
+                self.stack.addWidget(lists[category])
+        self._page_index = 0
+        self._category = "text"
+        self._sync_page()
 
         self.hint_label = QLabel()
         self.hint_label.setWordWrap(True)
@@ -133,6 +161,7 @@ class ClipboardManager(QWidget):
         lay.setContentsMargins(10, 10, 10, 8)
         lay.addLayout(top)
         lay.addLayout(tabs)
+        lay.addLayout(category_tabs)
         lay.addWidget(self.stack, 1)
         lay.addWidget(self.hint_label)
         self._apply_texts()      # 统一填入当前语言的文案
@@ -192,6 +221,15 @@ class ClipboardManager(QWidget):
             #Card[dragging="true"] {
                 background: #f6faff; border-color: #4d8dff;
             }
+            #PreviewButton {
+                background: rgba(255, 255, 255, 225);
+                border: 1px solid #cfd7e3; border-radius: 6px;
+                padding: 0px; color: #344054; font-size: 11pt;
+            }
+            #PreviewButton:hover {
+                background: #e3efff; border-color: #7fb0ff;
+            }
+            #PreviewButton:pressed { background: #d4e7ff; }
             /* 菜单会继承全局白色背景,悬浮项默认是白色高亮文字,
                白字白底不可见,必须显式给出高亮配色 */
             QMenu {
@@ -209,21 +247,57 @@ class ClipboardManager(QWidget):
             }
         """)
 
-    # ---------------- 页面切换(历史 / 常用) ----------------
+    # ---------------- 页面切换(历史 / 常用 + 内容分类) ----------------
+    def all_lists(self):
+        """返回全部独立列表，顺序固定，便于统一刷新与保存。"""
+        return [lists[category]
+                for lists in (self.history_lists, self.favorite_lists)
+                for category in self.CATEGORIES]
+
     def current_list(self):
-        """当前页面对应的列表(历史 / 常用)。"""
-        return self.favw if self.stack.currentIndex() == 1 else self.listw
+        """当前“历史/常用 + 分类”组合对应的列表。"""
+        lists = (self.favorite_lists if self._page_index == 1
+                 else self.history_lists)
+        return lists[self._category]
 
     def list_of(self, item):
         """条目所属的列表;已被删除的条目 row 为 -1。"""
-        return self.listw if self.listw.row(item) >= 0 else self.favw
+        for lw in self.all_lists():
+            if lw.row(item) >= 0:
+                return lw
+        return self.current_list()
+
+    def _is_history_list(self, lw) -> bool:
+        return lw in self.history_lists.values()
+
+    def _list_for_clip(self, clip: ClipItem, favorite=False):
+        lists = self.favorite_lists if favorite else self.history_lists
+        return lists[clip.category()]
+
+    def _sync_page(self):
+        self.stack.setCurrentWidget(self.current_list())
+        self.hist_tab.setChecked(self._page_index == 0)
+        self.fav_tab.setChecked(self._page_index == 1)
+        for category, btn in self.category_buttons.items():
+            btn.setChecked(category == self._category)
+        # 手动添加只会创建文本，仅在“常用-文本”页面显示入口。
+        self.add_btn.setVisible(
+            self._page_index == 1 and self._category == "text")
 
     def switch_page(self, index: int):
-        self.preview.hide_popup()
-        self.stack.setCurrentIndex(index)
-        self.hist_tab.setChecked(index == 0)
-        self.fav_tab.setChecked(index == 1)
-        self.add_btn.setVisible(index == 1)
+        self._page_index = 1 if index == 1 else 0
+        self._sync_page()
+
+    def switch_category(self, category):
+        """切换文本/图片/音频页面；也接受 0/1/2 页签序号。"""
+        if isinstance(category, int):
+            if not 0 <= category < len(self.CATEGORIES):
+                return
+            category = self.CATEGORIES[category]
+        if category not in self.CATEGORIES:
+            return
+        self._category = category
+        self._sync_page()
 
     def _tray_pixmap(self) -> QPixmap:
         pix = QPixmap(64, 64)
@@ -270,12 +344,15 @@ class ClipboardManager(QWidget):
         self.settings_btn.setText(tr("⚙ 设置"))
         self.hist_tab.setText(tr("📋 历史"))
         self.fav_tab.setText(tr("⭐ 常用"))
+        self.text_tab.setText(tr("📝 文本"))
+        self.image_tab.setText(tr("🖼 图片"))
+        self.audio_tab.setText(tr("🎵 音频"))
         self.add_btn.setText(tr("➕ 添加"))
         self.add_btn.setToolTip(tr("手动添加一条常用内容"))
         self.hint_label.setText(
-            tr("单击=复制并粘贴 · 悬浮=预览/编辑完整内容 · "
+            tr("单击=复制并粘贴 · 眼睛=查看/编辑详情 · "
                "拖到目标窗口=粘贴 · 列表内拖动=排序 · "
-               "右键=改字体颜色/删除"))
+               "右键=图片改名/字体颜色/删除"))
 
     def retranslate_ui(self):
         """切换语言后刷新所有已建好的界面文案。"""
@@ -285,7 +362,7 @@ class ClipboardManager(QWidget):
             self._tray_toggle_act.setText(tr("显示/隐藏窗口"))
             self._tray_quit_act.setText(tr("退出"))
         self.preview.retranslate()
-        for lw in (self.listw, self.favw):
+        for lw in self.all_lists():
             for row in range(lw.count()):
                 lw.item(row).retranslate()
 
@@ -432,7 +509,7 @@ class ClipboardManager(QWidget):
     def apply_font_size(self):
         size = int(self.config["font_size"])
         self.setFont(hei_font(size))
-        for lw in (self.listw, self.favw):
+        for lw in self.all_lists():
             for row in range(lw.count()):
                 lw.item(row).setFont(hei_font(size))
 
@@ -575,18 +652,19 @@ class ClipboardManager(QWidget):
     def add_from_mime(self, mime: QMimeData, source=""):
         clip = self._clip_from_mime(mime)
         if clip is None:
-            return
+            return None
         # 与已有条目重复:挪到顶部即可
-        for row in range(self.listw.count()):
-            item = self.listw.item(row)
-            if item.data(ROLE_CLIP).sig == clip.sig:
-                if row != 0:
-                    self.listw.move_row(row, 0)
-                self._drop_orphan_image(clip)
-                return
+        found = self._find_by_sig(self.history_lists.values(), clip.sig)
+        if found is not None:
+            lw, row = found
+            if row != 0:
+                lw.move_row(row, 0)
+            self._drop_orphan_image(clip)
+            return clip
         self.insert_clip(clip, row=0)
         self.trim_history()
         self.schedule_save()
+        return clip
 
     def _clip_from_mime(self, mime: QMimeData):
         if mime.hasImage():
@@ -609,9 +687,15 @@ class ClipboardManager(QWidget):
         if mime.hasUrls():
             files = [u.toLocalFile() for u in mime.urls() if u.isLocalFile()]
             if files:
-                sig = "files:" + hashlib.sha1(
+                if all(is_audio_file(path) for path in files):
+                    kind = "audio"
+                elif all(is_image_file(path) for path in files):
+                    kind = "image_files"
+                else:
+                    kind = "files"
+                sig = kind + ":" + hashlib.sha1(
                     "\n".join(files).encode()).hexdigest()
-                return ClipItem("files", files=files, sig=sig)
+                return ClipItem(kind, files=files, sig=sig)
         if mime.hasText():
             text = mime.text()
             if text and text.strip():
@@ -626,19 +710,21 @@ class ClipboardManager(QWidget):
             return
         used = any(
             lw.item(r).data(ROLE_CLIP).image_path == clip.image_path
-            for lw in (self.listw, self.favw) for r in range(lw.count()))
+            for lw in self.all_lists() for r in range(lw.count()))
         if not used and os.path.exists(clip.image_path):
             os.remove(clip.image_path)
 
     # ---------------- 常用内容 ----------------
-    def _fav_row_of_sig(self, sig: str) -> int:
-        for r in range(self.favw.count()):
-            if self.favw.item(r).data(ROLE_CLIP).sig == sig:
-                return r
-        return -1
+    @staticmethod
+    def _find_by_sig(lists, sig: str):
+        for lw in lists:
+            for row in range(lw.count()):
+                if lw.item(row).data(ROLE_CLIP).sig == sig:
+                    return lw, row
+        return None
 
     def _insert_favorite(self, clip: ClipItem):
-        self.favw.insert_card(clip, 0)
+        self._list_for_clip(clip, favorite=True).insert_card(clip, 0)
         self.apply_filter(self.search.text())
         self.schedule_save()
         if self.tray is not None:
@@ -649,7 +735,7 @@ class ClipboardManager(QWidget):
     def add_item_to_favorites(self, item):
         """把历史条目收藏到常用页(内容独立复制,互不影响)。"""
         src: ClipItem = item.data(ROLE_CLIP)
-        if self._fav_row_of_sig(src.sig) >= 0:
+        if self._find_by_sig(self.favorite_lists.values(), src.sig) is not None:
             if self.tray is not None:
                 self.tray.showMessage(
                     tr("该内容已在常用列表中"), src.preview()[:60],
@@ -668,9 +754,10 @@ class ClipboardManager(QWidget):
         if not text or not text.strip():
             return
         sig = "text:" + hashlib.sha1(text.encode()).hexdigest()
-        row = self._fav_row_of_sig(sig)
-        if row >= 0:
-            self.favw.move_row(row, 0)
+        found = self._find_by_sig(self.favorite_lists.values(), sig)
+        if found is not None:
+            lw, row = found
+            lw.move_row(row, 0)
             return
         self._insert_favorite(ClipItem("text", text=text, sig=sig))
 
@@ -693,50 +780,49 @@ class ClipboardManager(QWidget):
             self.add_favorite_text(editor.toPlainText())
 
     def add_dropped(self, lw, mime: QMimeData):
-        """外部内容拖进列表:拖到哪个页面就存到哪个列表。"""
-        if lw is not self.favw:
-            self.add_from_mime(mime, source="拖入")
+        """外部拖入内容按真实类型落到当前历史/常用的分类页。"""
+        if self._is_history_list(lw):
+            clip = self.add_from_mime(mime, source="拖入")
+            if clip is not None:
+                self.switch_category(clip.category())
             return
         clip = self._clip_from_mime(mime)
         if clip is None:
             return
-        if self._fav_row_of_sig(clip.sig) >= 0:
+        if self._find_by_sig(self.favorite_lists.values(), clip.sig) is not None:
             self._drop_orphan_image(clip)
             return
         self._insert_favorite(clip)
+        self.switch_category(clip.category())
 
     # ---------------- 条目管理 ----------------
     def insert_clip(self, clip: ClipItem, row=0):
-        self.listw.insert_card(clip, row)
+        self._list_for_clip(clip).insert_card(clip, row)
         self.apply_filter(self.search.text())
 
     def trim_history(self):
-        while self.listw.count() > int(self.config["max_items"]):
-            item = self.listw.takeItem(self.listw.count() - 1)
-            clip = item.data(ROLE_CLIP)
-            if clip.kind == "image" and os.path.exists(clip.image_path):
-                os.remove(clip.image_path)
+        # 分类页完全独立，上限也分别作用于每个历史分类。
+        limit = int(self.config["max_items"])
+        for lw in self.history_lists.values():
+            while lw.count() > limit:
+                item = lw.takeItem(lw.count() - 1)
+                clip = item.data(ROLE_CLIP)
+                if (clip.kind == "image"
+                        and os.path.exists(clip.image_path)):
+                    os.remove(clip.image_path)
 
     def apply_filter(self, query: str):
         query = query.strip().lower()
-        for lw in (self.listw, self.favw):
+        for lw in self.all_lists():
             for row in range(lw.count()):
                 item = lw.item(row)
                 clip = item.data(ROLE_CLIP)
                 item.setHidden(bool(query)
                                and query not in clip.search_key().lower())
 
-    # ---------------- 悬浮预览 ----------------
-    def _on_item_hover(self, item):
-        self._hover_item = item
-        if self.preview.isVisible():
-            if self.preview.item is not item:
-                self._show_preview()        # 已有预览时直接切换
-        else:
-            self._hover_timer.start()
-
-    def _show_preview(self):
-        item = self._hover_item
+    # ---------------- 详情预览 ----------------
+    def show_item_preview(self, item):
+        """由卡片右下角眼睛按钮打开详情，不再由悬浮自动触发。"""
         try:
             if (item is None or item.isHidden()
                     or self.list_of(item).row(item) < 0):
@@ -744,12 +830,11 @@ class ClipboardManager(QWidget):
         except RuntimeError:
             return
         gl = self.list_of(item).item_global_rect(item)
-        if not gl.contains(QCursor.pos()):
-            return                          # 鼠标已经移走,不弹
+        self.list_of(item).setCurrentItem(item)
         self.preview.show_for(item, gl)
 
     def update_item_text(self, item, text: str):
-        """悬浮预览里编辑后保存:更新内容、签名和列表显示。"""
+        """详情窗口里编辑后保存:更新内容、签名和列表显示。"""
         clip: ClipItem = item.data(ROLE_CLIP)
         if clip.kind != "text":
             return
@@ -758,6 +843,26 @@ class ClipboardManager(QWidget):
         clip.sig = "text:" + hashlib.sha1(text.encode()).hexdigest()
         item.setText(clip.preview())
         self.schedule_save()
+
+    def update_image_name(self, item, name: str):
+        """修改图片在粘贴板中的备注名，不重命名原始文件。"""
+        clip: ClipItem = item.data(ROLE_CLIP)
+        if clip.category() != "image":
+            return
+        clip.name = name.strip()
+        item.refresh_label()
+        self.apply_filter(self.search.text())
+        self.schedule_save()
+
+    def edit_image_name(self, item):
+        clip: ClipItem = item.data(ROLE_CLIP)
+        current = clip.name or item.text()
+        name, accepted = QInputDialog.getText(
+            self, tr("修改图片名称"),
+            tr("输入图片备注名（留空恢复默认名称）:"),
+            QLineEdit.EchoMode.Normal, current)
+        if accepted:
+            self.update_image_name(item, name)
 
     # ---------------- 复制 / 粘贴 ----------------
     def set_clipboard_mime(self, mime: QMimeData):
@@ -848,18 +953,21 @@ class ClipboardManager(QWidget):
 
     # ---------------- 右键菜单 ----------------
     def show_menu(self, pos):
-        self.preview.hide_popup()
         lw = self.current_list()
         item = lw.itemAt(pos)
         menu = QMenu(self)
         if item is not None:
+            clip: ClipItem = item.data(ROLE_CLIP)
             menu.addAction(tr("📋 复制"), lambda: self.copy_item(item))
             menu.addAction(tr("📤 复制并粘贴"),
                            lambda: self.copy_and_paste_item(item))
             menu.addSeparator()
-            if lw is self.listw:
+            if self._is_history_list(lw):
                 menu.addAction(tr("⭐ 添加到常用"),
                                lambda: self.add_item_to_favorites(item))
+            if clip.category() == "image":
+                menu.addAction(tr("✏ 修改图片名称"),
+                               lambda: self.edit_image_name(item))
             menu.addAction(tr("🎨 修改字体颜色"),
                            lambda: self.pick_color(item))
             menu.addAction(tr("↩ 恢复默认颜色"),
@@ -870,7 +978,7 @@ class ClipboardManager(QWidget):
                            lambda: self.move_item_to_top(item))
             menu.addAction(tr("❌ 删除"), lambda: self.delete_item(item))
         menu.addSeparator()
-        menu.addAction(tr("🗑 清空全部"), self.clear_all)
+        menu.addAction(tr("🗑 清空当前页"), self.clear_all)
         menu.exec(lw.mapToGlobal(pos))
 
     def pick_color(self, item):
@@ -904,10 +1012,15 @@ class ClipboardManager(QWidget):
         lw = self.current_list()
         if lw.count() == 0:
             return
-        if lw is self.favw:
-            title, msg = tr("清空常用"), tr("确定清空全部常用内容吗?")
+        category = tr({
+            "text": "文本", "image": "图片", "audio": "音频"
+        }[self._category])
+        if not self._is_history_list(lw):
+            title = tr("清空常用")
+            msg = tr("确定清空常用中的“{}”页吗?").format(category)
         else:
-            title, msg = tr("清空历史"), tr("确定清空全部剪贴板历史吗?")
+            title = tr("清空历史")
+            msg = tr("确定清空历史中的“{}”页吗?").format(category)
         ret = QMessageBox.question(self, title, msg)
         if ret != QMessageBox.StandardButton.Yes:
             return
@@ -919,23 +1032,24 @@ class ClipboardManager(QWidget):
         self._save_timer.start()
 
     def save_history(self):
-        self._save_list(self.listw, C.HISTORY_FILE)
-        self._save_list(self.favw, C.FAVORITES_FILE)
+        self._save_lists(self.history_lists, C.HISTORY_FILE)
+        self._save_lists(self.favorite_lists, C.FAVORITES_FILE)
 
-    def _save_list(self, lw, path: str):
-        items = [lw.item(r).data(ROLE_CLIP).to_dict()
-                 for r in range(lw.count())]
+    def _save_lists(self, lists, path: str):
+        items = [lists[category].item(row).data(ROLE_CLIP).to_dict()
+                 for category in self.CATEGORIES
+                 for row in range(lists[category].count())]
         tmp = path + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump({"items": items}, f, ensure_ascii=False, indent=1)
         os.replace(tmp, path)
 
     def load_history(self):
-        self._load_list(self.listw, C.HISTORY_FILE)
-        self._load_list(self.favw, C.FAVORITES_FILE)
+        self._load_lists(self.history_lists, C.HISTORY_FILE)
+        self._load_lists(self.favorite_lists, C.FAVORITES_FILE)
         self.apply_filter(self.search.text())
 
-    def _load_list(self, lw, path: str):
+    def _load_lists(self, lists, path: str):
         if not os.path.exists(path):
             return
         try:
@@ -947,4 +1061,5 @@ class ClipboardManager(QWidget):
             clip = ClipItem.from_dict(d)
             if clip.kind == "image" and not os.path.exists(clip.image_path):
                 continue
+            lw = lists[clip.category()]
             lw.insert_card(clip, lw.count())

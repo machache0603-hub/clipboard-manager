@@ -26,11 +26,11 @@ EN = {
         "Keep the window above others for easy dragging",
     "🗑 清空": "🗑 Clear",
     "⚙ 设置": "⚙ Settings",
-    "单击=复制并粘贴 · 悬浮=预览/编辑完整内容 · "
-    "拖到目标窗口=粘贴 · 列表内拖动=排序 · 右键=改字体颜色/删除":
-        "Click = copy & paste · Hover = preview/edit · "
+    "单击=复制并粘贴 · 眼睛=查看/编辑详情 · "
+    "拖到目标窗口=粘贴 · 列表内拖动=排序 · 右键=图片改名/字体颜色/删除":
+        "Click = copy & paste · Eye = view/edit details · "
         "Drag out = paste · "
-        "Drag in list = reorder · Right-click = color/delete",
+        "Drag in list = reorder · Right-click = rename image/color/delete",
     "显示/隐藏窗口": "Show/Hide Window",
     "退出": "Quit",
     "快捷键未生效": "Hotkey not active",
@@ -77,18 +77,43 @@ EN = {
     # ---- 常用内容页 ----
     "📋 历史": "📋 History",
     "⭐ 常用": "⭐ Favorites",
+    "📝 文本": "📝 Text",
+    "🖼 图片": "🖼 Images",
+    "🎵 音频": "🎵 Audio",
+    "文本": "Text",
+    "图片": "Images",
+    "音频": "Audio",
     "➕ 添加": "➕ Add",
     "手动添加一条常用内容": "Add a favorite entry manually",
     "添加常用内容": "Add Favorite",
     "输入要保存的常用内容…": "Enter the content to save…",
     "⭐ 添加到常用": "⭐ Add to Favorites",
+    "✏ 修改图片名称": "✏ Rename Image Note",
+    "修改图片名称": "Rename Image Note",
+    "输入图片备注名（留空恢复默认名称）:":
+        "Image note (leave empty to restore the default name):",
     "已添加到常用": "Added to favorites",
     "该内容已在常用列表中": "Already in favorites",
     "清空常用": "Clear favorites",
     "确定清空全部常用内容吗?": "Clear all favorite items?",
+    "🗑 清空当前页": "🗑 Clear This Page",
+    "确定清空常用中的“{}”页吗?":
+        "Clear the {} page in favorites?",
+    "确定清空历史中的“{}”页吗?":
+        "Clear the {} page in history?",
     # ---- 悬浮预览 ----
     "💾 保存修改": "💾 Save Changes",
+    "查看详细内容": "View details",
+    "关闭详情": "Close details",
+    "文本详情": "Text Details",
+    "图片详情": "Image Details",
+    "音频详情": "Audio Details",
+    "文件详情": "File Details",
     "表情包/图片": "Image / Sticker",
+    "输入图片备注名…": "Enter an image note…",
+    "可修改图片备注名": "Image note is editable",
+    "文件列表只读，图片名称可修改":
+        "File list is read-only; image note is editable",
     "可直接编辑": "Editable",
     "文件列表(只读)": "File list (read-only)",
     "✓ 已复制": "✓ Copied",
@@ -96,12 +121,19 @@ EN = {
     # ---- 条目 / 卡片 ----
     "🖼  图片 / 表情包": "🖼  Image / Sticker",
     "📁  {} 个文件:{}": "📁  {} file(s): {}",
+    "🖼  {} 个图片文件:{}": "🖼  {} image file(s): {}",
+    "🎵  {} 个音频:{}": "🎵  {} audio file(s): {}",
     "🖼  图片 {}×{}": "🖼  Image {}×{}",
+    "图片 {}×{}": "Image {}×{}",
+    "未命名图片": "Untitled image",
+    "{} 个图片文件": "{} image files",
+    "音频文件(只读)": "Audio files (read-only)",
+    "图片文件(只读)": "Image files (read-only)",
     # ---- 设置对话框 ----
     "设置": "Settings",
     "常用 ▾": "Presets ▾",
     "呼出/隐藏窗口快捷键:": "Show/hide window hotkey:",
-    "历史条数上限:": "Max history items:",
+    "每类历史条数上限:": "Max items per category:",
     "列表字体大小:": "List font size:",
     "语言:": "Language:",
     "跟随系统": "Follow system",
