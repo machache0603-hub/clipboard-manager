@@ -1,10 +1,10 @@
-"""悬浮预览/编辑弹窗。"""
+"""由卡片眼睛按钮打开的详情预览/编辑弹窗。"""
 
 from PyQt6.QtCore import QMimeData, QRect, Qt, QTimer
 from PyQt6.QtGui import QCursor, QPixmap
 from PyQt6.QtWidgets import (QApplication, QHBoxLayout, QLabel,
-                             QPlainTextEdit, QPushButton, QVBoxLayout,
-                             QWidget)
+                             QLineEdit, QPlainTextEdit, QPushButton,
+                             QToolButton, QVBoxLayout, QWidget)
 
 from . import constants as C
 from .constants import hei_font
@@ -12,8 +12,8 @@ from .i18n import tr
 
 
 class PreviewPopup(QWidget):
-    """悬浮条目时弹出的完整内容预览窗。
-    鼠标移进窗内不会消失:文本可直接编辑,可一键复制/保存。"""
+    """点击卡片眼睛按钮后弹出的完整内容预览窗。
+    打开后持续显示，只由右上角关闭按钮或内容失效场景关闭。"""
 
     def __init__(self, owner):
         super().__init__(None)
@@ -30,6 +30,18 @@ class PreviewPopup(QWidget):
         self.editor.textChanged.connect(self._on_edited)
         self.img_label = QLabel()
         self.img_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.name_editor = QLineEdit()
+        self.name_editor.textEdited.connect(self._on_edited)
+        self.name_editor.setClearButtonEnabled(True)
+        self.title_label = QLabel()
+        self.title_label.setStyleSheet(
+            "font-weight: 600; color: #344054; border: none;")
+        self.close_btn = QToolButton()
+        self.close_btn.setObjectName("DetailCloseButton")
+        self.close_btn.setText("×")
+        self.close_btn.setFixedSize(28, 28)
+        self.close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.close_btn.clicked.connect(self.hide_popup)
         self.tip = QLabel()
         self.tip.setStyleSheet("color:#999; font-size:9pt; border:none;")
         self.copy_btn = QPushButton(tr("📋 复制"))
@@ -42,9 +54,16 @@ class PreviewPopup(QWidget):
         btns.addStretch(1)
         btns.addWidget(self.copy_btn)
         btns.addWidget(self.save_btn)
+        header = QHBoxLayout()
+        header.setContentsMargins(2, 0, 0, 0)
+        header.addWidget(self.title_label)
+        header.addStretch(1)
+        header.addWidget(self.close_btn)
         lay = QVBoxLayout(self)
         lay.setContentsMargins(10, 10, 10, 8)
+        lay.addLayout(header)
         lay.addWidget(self.img_label)
+        lay.addWidget(self.name_editor)
         lay.addWidget(self.editor)
         lay.addLayout(btns)
 
@@ -53,21 +72,28 @@ class PreviewPopup(QWidget):
                 background: #ffffff;
                 border: 1px solid #8fb4e8; border-radius: 8px;
             }
-            QPlainTextEdit {
+            QLineEdit, QPlainTextEdit {
                 background: #ffffff; color: #000000;
                 border: 1px solid #e3e3e3; border-radius: 6px;
             }
+            QLineEdit { padding: 6px 8px; }
             QPushButton {
                 border: 1px solid #d9d9d9; border-radius: 6px;
                 padding: 5px 12px; background: #ffffff;
             }
             QPushButton:hover { background: #f2f7ff; }
             QPushButton:disabled { color: #bbbbbb; }
+            #DetailCloseButton {
+                background: transparent; color: #667085;
+                border: none; border-radius: 6px;
+                padding: 0px; font-size: 17pt;
+            }
+            #DetailCloseButton:hover {
+                background: #fee4e2; color: #b42318;
+            }
+            #DetailCloseButton:pressed { background: #fecdca; }
         """)
 
-        self._watch = QTimer(self)          # 轮询鼠标位置决定何时关闭
-        self._watch.setInterval(250)
-        self._watch.timeout.connect(self._check_cursor)
         self._reset_timer = QTimer(self)
         self._reset_timer.setSingleShot(True)
         self._reset_timer.timeout.connect(self._reset_buttons)
@@ -75,6 +101,8 @@ class PreviewPopup(QWidget):
     def _reset_buttons(self):
         self.copy_btn.setText(tr("📋 复制"))
         self.save_btn.setText(tr("💾 保存修改"))
+        self.name_editor.setPlaceholderText(tr("输入图片备注名…"))
+        self.close_btn.setToolTip(tr("关闭详情"))
 
     def retranslate(self):
         self._reset_buttons()
@@ -84,6 +112,19 @@ class PreviewPopup(QWidget):
         clip = item.data(C.ROLE_CLIP)
         self.item = item
         self._reset_buttons()
+        if clip.category() == "image":
+            self.title_label.setText(tr("图片详情"))
+        elif clip.category() == "audio":
+            self.title_label.setText(tr("音频详情"))
+        elif clip.kind == "text":
+            self.title_label.setText(tr("文本详情"))
+        else:
+            self.title_label.setText(tr("文件详情"))
+        is_image = clip.category() == "image"
+        self.name_editor.blockSignals(True)
+        self.name_editor.setText(clip.name or item.text() if is_image else "")
+        self.name_editor.blockSignals(False)
+        self.name_editor.setVisible(is_image)
         if clip.kind == "image":
             pix = QPixmap(clip.image_path)
             if pix.isNull():
@@ -95,8 +136,9 @@ class PreviewPopup(QWidget):
             self.img_label.setPixmap(pix)
             self.img_label.show()
             self.editor.hide()
-            self.save_btn.hide()
-            self.tip.setText(tr("表情包/图片"))
+            self.save_btn.show()
+            self.save_btn.setEnabled(False)
+            self.tip.setText(tr("可修改图片备注名"))
         else:
             text = clip.text if clip.kind == "text" \
                 else "\n".join(clip.files)
@@ -110,14 +152,20 @@ class PreviewPopup(QWidget):
             self.editor.show()
             self.img_label.hide()
             self.img_label.setPixmap(QPixmap())
-            self.save_btn.setVisible(clip.kind == "text")
+            self.save_btn.setVisible(clip.kind == "text" or is_image)
             self.save_btn.setEnabled(False)
-            self.tip.setText(tr("可直接编辑") if clip.kind == "text"
-                             else tr("文件列表(只读)"))
+            if clip.kind == "text":
+                tip = tr("可直接编辑")
+            elif clip.kind == "image_files":
+                tip = tr("文件列表只读，图片名称可修改")
+            elif clip.kind == "audio":
+                tip = tr("音频文件(只读)")
+            else:
+                tip = tr("文件列表(只读)")
+            self.tip.setText(tip)
         self.adjustSize()
         self._place(anchor)
         self.show()
-        self._watch.start()
 
     def _place(self, anchor: QRect):
         screen = (QApplication.screenAt(QCursor.pos())
@@ -133,7 +181,6 @@ class PreviewPopup(QWidget):
         self.move(x, y)
 
     def hide_popup(self):
-        self._watch.stop()
         self.item = None
         self.hide()
 
@@ -145,23 +192,8 @@ class PreviewPopup(QWidget):
         except RuntimeError:                # 条目已被删除
             return False
 
-    def _check_cursor(self):
-        if not self.isVisible():
-            self._watch.stop()
-            return
-        if not self._item_alive() or not self.owner.isVisible():
-            self.hide_popup()
-            return
-        pos = QCursor.pos()
-        if self.frameGeometry().adjusted(-4, -4, 4, 4).contains(pos):
-            return                          # 鼠标在预览窗里,保持
-        if self.owner.list_of(self.item).item_global_rect(
-                self.item).contains(pos):
-            return                          # 鼠标还在条目上,保持
-        self.hide_popup()
-
     # ---------- 动作 ----------
-    def _on_edited(self):
+    def _on_edited(self, *_args):
         if self.item is not None:
             self.save_btn.setEnabled(True)
 
@@ -169,7 +201,7 @@ class PreviewPopup(QWidget):
         if not self._item_alive():
             return
         clip = self.item.data(C.ROLE_CLIP)
-        if clip.kind == "image":
+        if clip.kind != "text":
             self.owner.copy_item(self.item)
         else:
             mime = QMimeData()
@@ -181,7 +213,13 @@ class PreviewPopup(QWidget):
     def _save(self):
         if not self._item_alive():
             return
-        self.owner.update_item_text(self.item, self.editor.toPlainText())
+        clip = self.item.data(C.ROLE_CLIP)
+        if clip.category() == "image":
+            self.owner.update_image_name(
+                self.item, self.name_editor.text())
+        else:
+            self.owner.update_item_text(
+                self.item, self.editor.toPlainText())
         self.save_btn.setText(tr("✓ 已保存"))
         self.save_btn.setEnabled(False)
         self._reset_timer.start(1200)

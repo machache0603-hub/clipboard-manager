@@ -1,10 +1,12 @@
 """卡片控件与带动画的卡片列表容器。"""
 
+import os
+
 from PyQt6.QtCore import (QEasingCurve, QPoint, QPropertyAnimation, QRect,
                           Qt, QTimer, pyqtSignal)
 from PyQt6.QtGui import QBrush, QColor, QDrag, QFont, QPixmap
 from PyQt6.QtWidgets import (QApplication, QFrame, QHBoxLayout, QLabel,
-                             QScrollArea, QWidget)
+                             QScrollArea, QToolButton, QVBoxLayout, QWidget)
 
 from . import constants as C
 from .constants import hei_font
@@ -26,39 +28,92 @@ class Card(QFrame):
         self.setProperty("selected", False)
         self.setProperty("dragging", False)
 
-        lay = QHBoxLayout(self)
+        lay = (QVBoxLayout(self) if listw.grid_mode else QHBoxLayout(self))
         lay.setContentsMargins(9, 9, 9, 9)
-        lay.setSpacing(10)
+        lay.setSpacing(6 if listw.grid_mode else 10)
         self.label = QLabel()
         self.label.setWordWrap(True)
+        self.label.setContentsMargins(0, 0, 28, 0)
+        if listw.grid_mode:
+            self.label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.label.setMaximumHeight(42)
         self.label.setFont(
             hei_font(int(listw.owner.config["font_size"])))
         self.img_size = None    # 图片尺寸,切换语言时重刷文案用
-        if clip.kind == "image":
-            thumb = QLabel()
-            thumb.setStyleSheet("background: transparent; border: none;")
-            pix = QPixmap(clip.image_path)
-            if not pix.isNull():
-                thumb.setPixmap(pix.scaled(
+        self.thumb = None
+        self._source_pixmap = QPixmap()
+        if clip.kind in ("image", "image_files"):
+            self.thumb = QLabel()
+            self.thumb.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.thumb.setStyleSheet(
+                "background: transparent; border: none;")
+            image_path = (clip.image_path if clip.kind == "image"
+                          else (clip.files[0] if clip.files else ""))
+            self._source_pixmap = QPixmap(image_path)
+            if not self._source_pixmap.isNull() and not listw.grid_mode:
+                self.thumb.setPixmap(self._source_pixmap.scaled(
                     C.THUMB_SIZE, Qt.AspectRatioMode.KeepAspectRatio,
                     Qt.TransformationMode.SmoothTransformation))
-                self.img_size = (pix.width(), pix.height())
-                self.label.setText(
-                    tr("🖼  图片 {}×{}").format(*self.img_size))
-            else:
-                self.label.setText(clip.preview())
-            lay.addWidget(thumb)
+            if clip.kind == "image" and not self._source_pixmap.isNull():
+                self.img_size = (self._source_pixmap.width(),
+                                 self._source_pixmap.height())
+            lay.addWidget(self.thumb, 1 if listw.grid_mode else 0)
         else:
             self.label.setText(clip.preview())
         lay.addWidget(self.label, 1)
+        self.refresh_label()
         self.setForeground(QBrush(QColor(clip.color)))
+
+        self.preview_btn = QToolButton(self)
+        self.preview_btn.setObjectName("PreviewButton")
+        self.preview_btn.setText("👁")
+        self.preview_btn.setToolTip(tr("查看详细内容"))
+        self.preview_btn.setFixedSize(26, 24)
+        self.preview_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.preview_btn.clicked.connect(
+            lambda: self.listw.owner.show_item_preview(self))
+        self.preview_btn.raise_()
+        self._place_preview_button()
+
+    def refresh_label(self):
+        """刷新图片名称/普通预览文本，并保留完整名称作为悬浮提示。"""
+        if self.clip.kind == "image":
+            if self.clip.name:
+                text = self.clip.name
+            elif self.img_size is not None:
+                text = tr("图片 {}×{}").format(*self.img_size)
+            else:
+                text = tr("未命名图片")
+        elif self.clip.kind == "image_files":
+            if self.clip.name:
+                text = self.clip.name
+            elif len(self.clip.files) == 1:
+                text = os.path.basename(self.clip.files[0]) or tr("未命名图片")
+            else:
+                text = tr("{} 个图片文件").format(len(self.clip.files))
+        else:
+            text = self.clip.preview()
+        self.label.setText(text)
+        self.label.setToolTip(text if self.clip.category() == "image" else "")
+
+    def set_grid_dimensions(self, width: int, height: int):
+        """按网格单元尺寸缩放缩略图，保持比例且不裁剪。"""
+        self.setFixedSize(width, height)
+        if self.thumb is None:
+            return
+        thumb_height = max(70, height - 66)
+        self.thumb.setFixedHeight(thumb_height)
+        if not self._source_pixmap.isNull():
+            self.thumb.setPixmap(self._source_pixmap.scaled(
+                max(40, width - 20), thumb_height,
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation))
 
     def retranslate(self):
         """切换界面语言后刷新卡片文案(文本内容本身不变)。"""
-        if self.img_size is not None:
-            self.label.setText(tr("🖼  图片 {}×{}").format(*self.img_size))
-        elif self.clip.kind != "text":
-            self.label.setText(self.clip.preview())
+        if self.clip.kind != "text":
+            self.refresh_label()
+        self.preview_btn.setToolTip(tr("查看详细内容"))
 
     # ----- 与 QListWidgetItem 兼容的接口 -----
     def data(self, _role):
@@ -90,6 +145,18 @@ class Card(QFrame):
         self.style().unpolish(self)
         self.style().polish(self)
 
+    def _place_preview_button(self):
+        if not hasattr(self, "preview_btn"):
+            return
+        self.preview_btn.move(
+            max(2, self.width() - self.preview_btn.width() - 5),
+            max(2, self.height() - self.preview_btn.height() - 5))
+        self.preview_btn.raise_()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._place_preview_button()
+
     # ----- 鼠标 -----
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
@@ -111,10 +178,6 @@ class Card(QFrame):
             self.listw.on_card_double(self)
         super().mouseDoubleClickEvent(event)
 
-    def enterEvent(self, event):
-        self.listw.itemEntered.emit(self)
-        super().enterEvent(event)
-
     def contextMenuEvent(self, event):
         pos = self.listw.mapFromGlobal(event.globalPos())
         self.listw.customContextMenuRequested.emit(pos)
@@ -126,16 +189,17 @@ class CardList(QScrollArea):
 
     itemClicked = pyqtSignal(object)
     itemDoubleClicked = pyqtSignal(object)
-    itemEntered = pyqtSignal(object)
     customContextMenuRequested = pyqtSignal(QPoint)
 
     SPACING = 4
     MARGIN = 6
     ANIM_MS = 160
+    GRID_MIN_CELL_WIDTH = 180
 
-    def __init__(self, owner):
+    def __init__(self, owner, grid_mode=False):
         super().__init__()
         self.owner = owner
+        self.grid_mode = grid_mode
         self.cards = []
         self.container = QWidget()
         self.container.setObjectName("CardContainer")
@@ -150,9 +214,13 @@ class CardList(QScrollArea):
         self._anims = {}
         self._press_card = None
         self._press_gpos = QPoint()
+        self._press_dx = 0
         self._press_dy = 0
         self._dragging = False
         self._suppress_click = False
+        self._grid_columns = 1
+        self._cell_width = 0
+        self._cell_height = 0
         self._relayout_timer = QTimer(self)
         self._relayout_timer.setSingleShot(True)
         self._relayout_timer.setInterval(0)
@@ -243,9 +311,24 @@ class CardList(QScrollArea):
         super().resizeEvent(event)
         self.relayout(animate=False)
 
+    @classmethod
+    def column_count_for_width(cls, width: int) -> int:
+        """图片网格只使用 2、3、5 列，避免出现零散的 1/4 列状态。"""
+        usable = max(0, width - 2 * cls.MARGIN)
+        five = 5 * cls.GRID_MIN_CELL_WIDTH + 4 * cls.SPACING
+        three = 3 * cls.GRID_MIN_CELL_WIDTH + 2 * cls.SPACING
+        if usable >= five:
+            return 5
+        if usable >= three:
+            return 3
+        return 2
+
     def relayout(self, animate=True, skip=None):
         width = self.viewport().width()
         self.container.setFixedWidth(width)
+        if self.grid_mode:
+            self._relayout_grid(width, animate, skip)
+            return
         cw = max(50, width - 2 * self.MARGIN)
         y = self.MARGIN
         for card in self.cards:
@@ -270,6 +353,44 @@ class CardList(QScrollArea):
         self.container.setFixedHeight(
             max(y - self.SPACING + self.MARGIN, self.viewport().height()))
 
+    def _relayout_grid(self, width, animate=True, skip=None):
+        columns = self.column_count_for_width(width)
+        available = max(100, width - 2 * self.MARGIN
+                        - (columns - 1) * self.SPACING)
+        cw = max(50, available // columns)
+        # 缩略图区域随列宽变化，卡片高度保持紧凑且同一行齐平。
+        ch = max(150, min(250, int(cw * 0.82) + 52))
+        self._grid_columns = columns
+        self._cell_width = cw
+        self._cell_height = ch
+
+        visible_index = 0
+        for card in self.cards:
+            if card.isHidden():
+                continue
+            card.set_grid_dimensions(cw, ch)
+            row, col = divmod(visible_index, columns)
+            if card is not skip:
+                target = QPoint(
+                    self.MARGIN + col * (cw + self.SPACING),
+                    self.MARGIN + row * (ch + self.SPACING))
+                if animate and card.laid_out and card.pos() != target:
+                    self._animate(card, target)
+                else:
+                    anim = self._anims.pop(card, None)
+                    if anim is not None:
+                        anim.stop()
+                    card.move(target)
+                card.laid_out = True
+            visible_index += 1
+
+        rows = ((visible_index + columns - 1) // columns
+                if visible_index else 0)
+        content_height = (2 * self.MARGIN + rows * ch
+                          + max(0, rows - 1) * self.SPACING)
+        self.container.setFixedHeight(
+            max(content_height, self.viewport().height()))
+
     def _animate(self, card, target: QPoint):
         anim = self._anims.pop(card, None)
         if anim is not None:
@@ -288,7 +409,9 @@ class CardList(QScrollArea):
         self.setFocus()
         self._press_card = card
         self._press_gpos = gpos
-        self._press_dy = card.mapFromGlobal(gpos).y()
+        press_pos = card.mapFromGlobal(gpos)
+        self._press_dx = press_pos.x()
+        self._press_dy = press_pos.y()
         self._dragging = False
 
     def on_card_move(self, card, gpos: QPoint):
@@ -307,12 +430,14 @@ class CardList(QScrollArea):
         if not self.rect().adjusted(-40, -40, 40, 40).contains(local):
             self._start_external_drag(card)
             return
-        # 卡片纵向跟随鼠标
+        # 列表卡片纵向移动；图片网格卡片同时跟随横纵坐标。
         anim = self._anims.pop(card, None)
         if anim is not None:
             anim.stop()
-        cy = self.container.mapFromGlobal(gpos).y() - self._press_dy
-        card.move(self.MARGIN, cy)
+        cpos = self.container.mapFromGlobal(gpos)
+        cy = cpos.y() - self._press_dy
+        cx = cpos.x() - self._press_dx if self.grid_mode else self.MARGIN
+        card.move(cx, cy)
         self._reorder_live(card)
         # 靠近上下边缘时自动滚动
         vy = self.viewport().mapFromGlobal(gpos).y()
@@ -324,6 +449,9 @@ class CardList(QScrollArea):
 
     def _reorder_live(self, card):
         """拖动过程中按卡片中心实时调整顺序,其他卡片动画让位。"""
+        if self.grid_mode:
+            self._reorder_grid_live(card)
+            return
         center = card.y() + card.height() // 2
         others = [c for c in self.cards
                   if c is not card and not c.isHidden()]
@@ -336,6 +464,34 @@ class CardList(QScrollArea):
         else:
             new_idx = len(self.cards) - 1
         cur_idx = self.cards.index(card)
+        if new_idx != cur_idx:
+            self.cards.pop(cur_idx)
+            self.cards.insert(new_idx, card)
+            self.relayout(animate=True, skip=card)
+
+    def _reorder_grid_live(self, card):
+        """图片网格按离鼠标最近的行列槽位计算实时落点。"""
+        others = [c for c in self.cards
+                  if c is not card and not c.isHidden()]
+        center = card.geometry().center()
+        step_x = max(1, self._cell_width + self.SPACING)
+        step_y = max(1, self._cell_height + self.SPACING)
+        first_x = self.MARGIN + self._cell_width // 2
+        first_y = self.MARGIN + self._cell_height // 2
+        col = round((center.x() - first_x) / step_x)
+        row = round((center.y() - first_y) / step_y)
+        col = max(0, min(col, self._grid_columns - 1))
+        row = max(0, row)
+        visible_target = min(row * self._grid_columns + col, len(others))
+
+        cur_idx = self.cards.index(card)
+        remaining = self.cards[:cur_idx] + self.cards[cur_idx + 1:]
+        if visible_target < len(others):
+            new_idx = remaining.index(others[visible_target])
+        elif others:
+            new_idx = remaining.index(others[-1]) + 1
+        else:
+            new_idx = 0
         if new_idx != cur_idx:
             self.cards.pop(cur_idx)
             self.cards.insert(new_idx, card)

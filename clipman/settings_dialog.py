@@ -69,7 +69,7 @@ class SettingsDialog(QDialog):
 
         form = QFormLayout()
         form.addRow(tr("呼出/隐藏窗口快捷键:"), key_row)
-        form.addRow(tr("历史条数上限:"), self.max_spin)
+        form.addRow(tr("每类历史条数上限:"), self.max_spin)
         form.addRow(tr("列表字体大小:"), self.font_spin)
         form.addRow(tr("语言:"), self.lang_combo)
         form.addRow(self.paste_chk)
